@@ -1,7 +1,6 @@
-node_modules
-Dockerfile
 .git
 .github
-.husky
-jmeter.log
-reports/
+Dockerfile
+compose.yml
+compose/
+results/
