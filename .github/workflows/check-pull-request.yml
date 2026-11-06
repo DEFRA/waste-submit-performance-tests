@@ -1,0 +1,58 @@
+name: Check Pull Request
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+      - ready_for_review
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Run Pull Request Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Check shell syntax
+        run: sh -n entrypoint.sh
+
+      - name: Build the test suite image
+        run: docker build . -t waste-submit-performance-tests
+
+      # `k6 inspect` parses each script and resolves its imports and options without
+      # sending a request.
+      - name: Inspect k6 scripts
+        run: |
+          for script in tests/*.js; do
+            echo "Inspecting $script"
+            docker run --rm -e ENVIRONMENT=perf-test --entrypoint k6 \
+              waste-submit-performance-tests inspect "/opt/perftest/$script" > /dev/null
+          done
+
+      # Every test against the latest released image of the service, with a short
+      # response-time run. This proves the scripts work, not the service's real
+      # performance: that is measured in CDP perf-test.
+      - name: Run the suite against the service in Docker Compose
+        env:
+          DURATION: 30s
+        run: docker compose up --build --exit-code-from development --quiet-pull
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-test-results
+          path: results/
+
+      - name: Stop Docker Compose
+        if: always()
+        run: docker compose down --volumes
