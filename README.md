@@ -83,8 +83,8 @@ CDP's guide to scheduled runs is
 
 ## Running locally
 
-You need Docker. [compose.yml](compose.yml) starts a released image of the API with its Postgres, LocalStack in place of
-the results bucket, and the suite:
+You need Docker. [compose.yml](compose.yml) starts a released image of the API with its Postgres, a WireMock stub in
+place of epr-common-data-api, LocalStack in place of the results bucket, and the suite:
 
 ```bash
 docker compose up --build --exit-code-from development
@@ -94,12 +94,16 @@ The results are written to `./results`. Open `results/index.html`. Change what r
 example:
 
 ```bash
-SERVICE_VERSION=0.8.0 DURATION=30s docker compose up --build --exit-code-from development
+SERVICE_VERSION=0.10.0 DURATION=30s docker compose up --build --exit-code-from development
 docker compose run --rm -e PROFILE=smoke development
 ```
 
 `SERVICE_VERSION` picks the API image (default `latest`). The stack gives the service a local-only `PerformanceTests`
 client and the suite its credentials. Pull a newer `latest` with `docker compose pull service`.
+
+The stub, in [compose/common-data-api](compose/common-data-api/README.md), serves synthetic approved submissions for
+2024 for the two default `SUBMITTER_IDS`, and nothing for other years. If the service changes what it reads from
+epr-common-data-api, change the stub's mappings with it, or the pull request check will fail.
 
 To run one script against a service on your own machine with k6 installed (`brew install k6`):
 
@@ -210,13 +214,11 @@ request with `params('<endpoint>')` from `lib/config.js` so the thresholds can s
 
 ## Things to know
 
-- **The API serves stub data.** It returns fixed data for 2024 from memory, so today's timings measure the platform and
-  the service, not a database query. Run the suite again when the real data source is wired in, and point
-  `SUBMITTER_IDS` and `PACKAGING_YEAR` at data that exists in `perf-test`. Test data must be synthetic.
-- **The local stack has no epr-common-data-api.** From SUB-410 the API reads approved submissions from
-  epr-common-data-api, which [compose.yml](compose.yml) doesn't run, so with those images the packaging endpoints
-  return `500` locally and `smoke` fails. Until a stub for it is added, use an image from before SUB-410 with
-  `SERVICE_VERSION`. This doesn't affect `perf-test`, where the service is configured to reach it.
+- **Where the data comes from.** From 0.10.0 the API reads approved submissions from epr-common-data-api. Locally that
+  is the WireMock stub, which answers in a millisecond or two, so local timings leave out epr-common-data-api: they
+  prove the scripts work, not how fast the service is. In `perf-test` the service needs `CommonDataApi__BaseUrl` set
+  and a route to epr-common-data-api; without them the packaging endpoints fail and `smoke` stops the run. Point
+  `SUBMITTER_IDS` and `PACKAGING_YEAR` at submitters with approved data in `perf-test`. Test data must be synthetic.
 - **`producer-material-totals-by-submitter` is not paged.** It returns every approved submission for the year, so its
   response grows with real data. Watch its p95 and `data_received` most closely once real data lands.
 - **A cold service is slower.** The first requests after the service starts take longer while .NET warms up. With the

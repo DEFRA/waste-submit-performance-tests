@@ -1,5 +1,6 @@
 # Runs the suite locally against a released image of waste-submit-reg-packaging-api,
-# with Postgres for the service and LocalStack standing in for the results bucket.
+# with Postgres for the service, a WireMock stub standing in for epr-common-data-api
+# (compose/common-data-api) and LocalStack standing in for the results bucket.
 #   docker compose up --build --exit-code-from development
 services:
   development:
@@ -55,10 +56,27 @@ services:
     networks:
       - performance-tests
 
+  # epr-common-data-api, where the service reads approved submissions from. The
+  # mappings serve synthetic data for 2024 and 204 for any other year.
+  common-data-api:
+    image: wiremock/wiremock:3.9.1
+    command: ['--disable-banner']
+    volumes:
+      - ./compose/common-data-api/mappings:/home/wiremock/mappings:ro
+    healthcheck:
+      test: ['CMD', 'curl', '-fs', 'http://localhost:8080/__admin/health']
+      interval: 3s
+      start_period: 5s
+      retries: 10
+    networks:
+      - performance-tests
+
   service:
     image: defradigital/waste-submit-reg-packaging-api:${SERVICE_VERSION:-latest}
     depends_on:
       postgres:
+        condition: service_healthy
+      common-data-api:
         condition: service_healthy
     env_file:
       - 'compose/aws.env'
@@ -67,6 +85,7 @@ services:
       Acl__Clients__PerformanceTests__Type: ApiKey
       Acl__Clients__PerformanceTests__Secret: performance-tests-pwd
       Acl__Clients__PerformanceTests__Scopes__0: read
+      CommonDataApi__BaseUrl: http://common-data-api:8080
       Postgres__Host: postgres
       Postgres__UseIamAuthentication: false
       Postgres__SslMode: Disable

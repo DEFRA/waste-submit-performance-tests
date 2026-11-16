@@ -1,0 +1,10 @@
+{
+  "priority": 10,
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/api/submissions/v1/pom/approved-submissions/[0-9]+"
+  },
+  "response": {
+    "status": 204
+  }
+}
