@@ -8,6 +8,7 @@ Portal in the `perf-test` environment. They cover
 - [Thresholds](#thresholds)
 - [Running in CDP](#running-in-cdp)
 - [Running locally](#running-locally)
+- [Authentication](#authentication)
 - [Settings](#settings)
 - [Results](#results)
 - [Layout](#layout)
@@ -50,7 +51,8 @@ Performance test suites only run in `perf-test`. The CDP Portal always runs the 
 [publish.yml](.github/workflows/publish.yml) builds whenever `main` changes.
 
 1. Deploy waste-submit-reg-packaging-api to `perf-test` from the CDP Portal. The tests call it at
-   `https://waste-submit-reg-packaging-api.perf-test.cdp-int.defra.cloud`.
+   `https://waste-submit-reg-packaging-api.perf-test.cdp-int.defra.cloud`, with the suite's own API key (see
+   [Authentication](#authentication)).
 2. Open [Test Suites](https://portal.cdp-int.defra.cloud/test-suites), choose **waste-submit-performance-tests**, pick
    `perf-test` and choose **Run**. Leave the profile empty to run every test, or set one of the profiles below.
 3. When it finishes, the Portal shows whether it passed and links to the report.
@@ -96,27 +98,67 @@ SERVICE_VERSION=0.8.0 DURATION=30s docker compose up --build --exit-code-from de
 docker compose run --rm -e PROFILE=smoke development
 ```
 
-`SERVICE_VERSION` picks the API image (default `latest`). Pull a newer `latest` with `docker compose pull service`.
+`SERVICE_VERSION` picks the API image (default `latest`). The stack gives the service a local-only `PerformanceTests`
+client and the suite its credentials. Pull a newer `latest` with `docker compose pull service`.
 
 To run one script against a service on your own machine with k6 installed (`brew install k6`):
 
 ```bash
-ENVIRONMENT=local BASE_URL=http://localhost:8085 k6 run tests/smoke.js
+ENVIRONMENT=local BASE_URL=http://localhost:8085 API_CLIENT_ID=Developer API_CLIENT_SECRET=developer-pwd k6 run tests/smoke.js
 ```
+
+To run from a laptop against a deployed service, go through the developer API gateway with the AWS OpenVPN connected,
+a Developer API key from your [CDP Portal profile](https://portal.cdp-int.defra.cloud/user-profile), and the suite's
+client credentials:
+
+```bash
+ENVIRONMENT=perf-test \
+  BASE_URL=https://ephemeral-protected.api.perf-test.cdp-int.defra.cloud/waste-submit-reg-packaging-api \
+  X_API_KEY=<developer API key> API_CLIENT_ID=<client id> API_CLIENT_SECRET=<secret> \
+  k6 run tests/smoke.js
+```
+
+Timings taken through the gateway include it, so use them to check the scripts, not to measure the service.
 
 Pull requests run the same Compose stack, with `DURATION=30s`, in
 [check-pull-request.yml](.github/workflows/check-pull-request.yml). That proves the scripts work, not the service's
 performance, which is only measured in `perf-test`.
 
+## Authentication
+
+The packaging endpoints need the `read` scope. The service takes an API key as HTTP Basic credentials,
+`Authorization: Basic base64(clientId:secret)`, for a client in its `Acl:Clients` list. See
+[Service-to-service authentication](https://github.com/DEFRA/waste-submit-reg-packaging-api#service-to-service-authentication)
+in the service's README. `/health` never needs it.
+
+The suite calls as its own client, `PerformanceTests`, so its traffic and access stay apart from the frontend's. To set it
+up in `perf-test`:
+
+1. In cdp-app-config, for waste-submit-reg-packaging-api in `perf-test`: `Acl__Clients__PerformanceTests__Type=ApiKey`
+   and `Acl__Clients__PerformanceTests__Scopes__0=read`.
+2. In the CDP Portal, on the service's secrets for `perf-test`: `Acl__Clients__PerformanceTests__Secret`, a new random
+   value. Redeploy the service so it picks the client up.
+3. In the CDP Portal, on this test suite's secrets for `perf-test`: `API_CLIENT_ID=PerformanceTests` and
+   `API_CLIENT_SECRET` with the same secret.
+
+The suite stops before running anything if either is missing. A wrong or unknown pair makes the packaging calls return
+`401`, so `smoke` fails and logs which setting to check.
+
+Inside CDP the suite calls the service directly and needs no `x-api-key`. That header is only for the developer API
+gateway, used from a laptop (see [Running locally](#running-locally)).
+
 ## Settings
 
-Every setting is an environment variable. In CDP only `ENVIRONMENT`, `PROFILE` and the results path are set, so the
-defaults apply.
+Every setting is an environment variable. In CDP only `ENVIRONMENT`, `PROFILE`, the results path and the two client
+secrets are set, so the defaults apply.
 
 | Variable | Default | What it does |
 |---|---|---|
 | `ENVIRONMENT` | Set by CDP | The environment, used to build the service's address. **Required** |
 | `PROFILE` | `all` | Which tests run. See [Profiles](#profiles) |
+| `API_CLIENT_ID` | CDP secret | The client the suite calls the service as. **Required** |
+| `API_CLIENT_SECRET` | CDP secret | That client's secret. **Required** |
+| `X_API_KEY` | Unset | A Developer API key, sent as `x-api-key`. Only for runs through the developer API gateway |
 | `BASE_URL` | `https://waste-submit-reg-packaging-api.<ENVIRONMENT>.cdp-int.defra.cloud` | Where the service is |
 | `PACKAGING_YEAR` | `2024` | The year asked for |
 | `SUBMITTER_IDS` | The two stub submitters | Comma-separated submitter organisation IDs to ask for |
@@ -124,19 +166,29 @@ defaults apply.
 | `DURATION` | `5m` | `response-time`: how long it runs |
 | `BURST_VUS` | `10` | `burst`: how many consumers at once |
 | `BURST_ITERATIONS` | `3` | `burst`: rounds per consumer |
-| `P95_MS` | `2000` | The p95 limit for one run |
+| `P95_MS` | `10000` | The p95 limit for one run |
 | `ERROR_RATE` | `0.01` | The failed-request limit for one run |
 | `RESULTS_OUTPUT_S3_PATH` | Set by CDP | Where the results are uploaded. Nothing is uploaded when it is unset |
 
 ## Results
 
-[entrypoint.sh](entrypoint.sh) writes everything to `results/`, and CDP uploads it to the Portal:
+Each run writes everything to `results/`, and [entrypoint.sh](entrypoint.sh) copies the folder to the
+`RESULTS_OUTPUT_S3_PATH` the CDP Portal gives the run. The Portal's
+report link opens `index.html`.
 
-- `index.html`: each test's result, with links. This is the page the Portal opens.
-- `<test>/report.html`: k6's own HTML report, with charts of response times and request rates. k6 only draws it for a
-  run long enough to chart, so `smoke` and `burst` don't have one.
-- `<test>/summary.json`: every metric, from `k6 run --summary-export`.
-- `logs/<test>.log`: k6's full output.
+- `index.html`: each test's result, requests, average and p95 response time, failed requests, checks, p95 for each
+  endpoint, and links to the files below.
+- `<test>/summary.html`: a report of every metric, threshold and check, for every test.
+- `<test>/dashboard.html`: k6's web dashboard, with charts of response times and request rates over the run. k6 only
+  draws it for a run long enough to chart, so `smoke` and `burst` don't have one.
+- `<test>/summary.json`: every metric. `index.html` is built from it.
+- `<test>/junit.xml`: each threshold as a JUnit test case.
+- `logs/<test>.log`: k6's full output, ending with its text summary.
+
+Each test's `handleSummary`, from [lib/summary.js](lib/summary.js), writes `summary.html`, `summary.json` and
+`junit.xml`, using the reporters in [lib/vendor/](lib/vendor/README.md). They are copied in rather than imported from
+the web because the CDP proxy blocks k6's remote imports. A new test needs
+`export const handleSummary = buildHandleSummary('<test>')`.
 
 The suite fails (exits 1) when any test misses a threshold, errors, or is skipped because `smoke` failed.
 
@@ -148,10 +200,12 @@ The suite fails (exits 1) when any test misses a threshold, errors, or is skippe
 | `lib/config.js` | The service's address, the test data and the request settings |
 | `lib/thresholds.js` | The pass/fail limits |
 | `lib/checks.js` | The checks every packaging response must pass |
+| `lib/summary.js`, `lib/vendor/` | The files each test writes when it ends |
 | `entrypoint.sh` | Runs the tests, writes `index.html` and uploads the results |
 | `compose.yml`, `compose/` | The local stack |
 
-To add a test, add a script to `tests/`, add it to the `case` in `entrypoint.sh` and to the tables above. Tag every
+To add a test, add a script to `tests/` that exports `handleSummary` (see [Results](#results)), add it to the `case`
+in `entrypoint.sh` and to the tables above. Tag every
 request with `params('<endpoint>')` from `lib/config.js` so the thresholds can split by endpoint.
 
 ## Things to know
@@ -159,6 +213,10 @@ request with `params('<endpoint>')` from `lib/config.js` so the thresholds can s
 - **The API serves stub data.** It returns fixed data for 2024 from memory, so today's timings measure the platform and
   the service, not a database query. Run the suite again when the real data source is wired in, and point
   `SUBMITTER_IDS` and `PACKAGING_YEAR` at data that exists in `perf-test`. Test data must be synthetic.
+- **The local stack has no epr-common-data-api.** From SUB-410 the API reads approved submissions from
+  epr-common-data-api, which [compose.yml](compose.yml) doesn't run, so with those images the packaging endpoints
+  return `500` locally and `smoke` fails. Until a stub for it is added, use an image from before SUB-410 with
+  `SERVICE_VERSION`. This doesn't affect `perf-test`, where the service is configured to reach it.
 - **`producer-material-totals-by-submitter` is not paged.** It returns every approved submission for the year, so its
   response grows with real data. Watch its p95 and `data_received` most closely once real data lands.
 - **A cold service is slower.** The first requests after the service starts take longer while .NET warms up. With the

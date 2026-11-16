@@ -4,6 +4,7 @@ import http from 'k6/http'
 import { check } from 'k6'
 import { endpoints, params, submitterIds } from '../lib/config.js'
 import { checkItemsResponse } from '../lib/checks.js'
+import { buildHandleSummary } from '../lib/summary.js'
 
 export const options = {
   scenarios: {
@@ -30,3 +31,5 @@ export default function () {
     checkItemsResponse(http.get(endpoints.forSubmitter(submitterId), params('for-submitter')), 'for-submitter')
   }
 }
+
+export const handleSummary = buildHandleSummary('smoke')

@@ -12,6 +12,17 @@ if [ -z "$ENVIRONMENT" ]; then
 fi
 export ENVIRONMENT
 
+# The service's API key, sent as HTTP Basic credentials. In CDP these are secrets on
+# this test suite. The client id is logged below; the secret is never printed.
+for var in API_CLIENT_ID API_CLIENT_SECRET; do
+  eval "value=\${$var}"
+  if [ -z "$value" ]; then
+    echo "Error: $var is not set. Add it as a secret on the test suite in the CDP Portal" >&2
+    exit 1
+  fi
+done
+unset value
+
 PROFILE=${PROFILE:-all}
 ROOT=$(cd "$(dirname "$0")" && pwd)
 RESULTS=${ROOT}/results
@@ -30,21 +41,47 @@ esac
 rm -rf "$RESULTS"
 mkdir -p "$LOGS"
 
-echo "run_id=${RUN_ID:-local} environment=$ENVIRONMENT profile=$PROFILE target=$TARGET"
+echo "run_id=${RUN_ID:-local} environment=$ENVIRONMENT profile=$PROFILE target=$TARGET client=$API_CLIENT_ID x_api_key=$([ -n "$X_API_KEY" ] && echo set || echo unset)"
 
 ROWS=""
 EXIT_CODE=0
 SMOKE_FAILED=false
 
+# One row per test: name, result class, result, stats cells, links.
 add_row() {
-  ROWS="${ROWS}<tr><td>$1</td><td class=\"$2\">$3</td><td>$4</td></tr>
+  ROWS="${ROWS}<tr><td>$1</td><td class=\"$2\">$3</td>$4<td>$5</td></tr>
 "
+}
+
+EMPTY_STATS='<td class="num">-</td><td class="num">-</td><td class="num">-</td><td class="num">-</td><td class="num">-</td><td>-</td>'
+
+# Requests, avg, p95, failed %, checks % and p95 per endpoint, from the summary.json
+# the test's handleSummary wrote.
+stats_cells() {
+  if [ ! -f "$1" ] || ! command -v jq >/dev/null 2>&1; then
+    echo "$EMPTY_STATS"
+    return
+  fi
+  jq -r '
+    def ms(v): if v == null then "-" else ((v * 10 | round) / 10 | tostring) + " ms" end;
+    def pct(v): if v == null then "-" else ((v * 10000 | round) / 100 | tostring) + "%" end;
+    .metrics as $m |
+    ([$m | to_entries[] | select(.key | startswith("http_req_duration{endpoint:"))
+      | (.key | ltrimstr("http_req_duration{endpoint:") | rtrimstr("}")) + " " + ms(.value.values["p(95)"])]
+      | join("<br>")) as $byEndpoint |
+    "<td class=\"num\">" + (($m.http_reqs.values.count // 0) | tostring) + "</td>" +
+    "<td class=\"num\">" + ms($m.http_req_duration.values.avg) + "</td>" +
+    "<td class=\"num\">" + ms($m.http_req_duration.values["p(95)"]) + "</td>" +
+    "<td class=\"num\">" + pct($m.http_req_failed.values.rate) + "</td>" +
+    "<td class=\"num\">" + pct($m.checks.values.rate) + "</td>" +
+    "<td>" + (if $byEndpoint == "" then "-" else $byEndpoint end) + "</td>"
+  ' "$1" 2>/dev/null || echo "$EMPTY_STATS"
 }
 
 for test in $TESTS; do
   if [ "$SMOKE_FAILED" = "true" ]; then
     echo "Skipping $test: smoke failed"
-    add_row "$test" "skipped" "Not run" "Smoke failed, so the timed tests were skipped"
+    add_row "$test" "skipped" "Not run" "$EMPTY_STATS" "Smoke failed, so the timed tests were skipped"
     continue
   fi
 
@@ -52,33 +89,39 @@ for test in $TESTS; do
   echo "==== $test ===="
   mkdir -p "$RESULTS/$test"
 
-  # k6 exports its own HTML report when the test ends. Port -1 turns off the live
-  # dashboard server, which nothing connects to here. POSIX sh has no pipefail, so
-  # k6's exit code is written to a file before tee hides it.
+  # The test's handleSummary (lib/summary.js) writes summary.html, summary.json and
+  # junit.xml to RESULTS_DIR. k6 also exports its web dashboard as dashboard.html, with
+  # charts over time; port -1 turns off the live server, which nothing connects to here.
+  # POSIX sh has no pipefail, so k6's exit code is written to a file before tee hides it.
   {
-    K6_WEB_DASHBOARD=true \
+    RESULTS_DIR="$RESULTS/$test" \
+      K6_WEB_DASHBOARD=true \
       K6_WEB_DASHBOARD_PORT=-1 \
-      K6_WEB_DASHBOARD_EXPORT="$RESULTS/$test/report.html" \
-      k6 run --no-color --summary-export "$RESULTS/$test/summary.json" "$ROOT/tests/$test.js"
+      K6_WEB_DASHBOARD_EXPORT="$RESULTS/$test/dashboard.html" \
+      k6 run --no-color "$ROOT/tests/$test.js"
     echo $? >"$LOGS/$test.exit"
   } 2>&1 | tee "$LOGS/$test.log"
   rc=$(cat "$LOGS/$test.exit")
   rm -f "$LOGS/$test.exit"
 
-  # k6 skips the HTML report for a run too short to chart (smoke, burst).
-  links="<a href=\"$test/summary.json\">Summary</a> · <a href=\"logs/$test.log\">Log</a>"
-  if [ -f "$RESULTS/$test/report.html" ]; then
-    links="<a href=\"$test/report.html\">Report</a> · $links"
-  fi
+  links=""
+  for file in summary.html:Report dashboard.html:Dashboard summary.json:JSON junit.xml:JUnit; do
+    if [ -f "$RESULTS/$test/${file%%:*}" ]; then
+      links="${links}<a href=\"$test/${file%%:*}\">${file#*:}</a> · "
+    fi
+  done
+  # k6 skips the dashboard for a run too short to chart (smoke, burst).
+  links="${links}<a href=\"logs/$test.log\">Log</a>"
+  stats=$(stats_cells "$RESULTS/$test/summary.json")
 
   case "$rc" in
-    0) add_row "$test" "pass" "Passed" "$links" ;;
+    0) add_row "$test" "pass" "Passed" "$stats" "$links" ;;
     99)
-      add_row "$test" "fail" "Failed" "Thresholds not met. $links"
+      add_row "$test" "fail" "Failed" "$stats" "Thresholds not met. $links"
       EXIT_CODE=1
       ;;
     *)
-      add_row "$test" "fail" "Error" "k6 exited with $rc. <a href=\"logs/$test.log\">Log</a>"
+      add_row "$test" "fail" "Error" "$stats" "k6 exited with $rc. $links"
       EXIT_CODE=1
       ;;
   esac
@@ -97,25 +140,29 @@ cat >"$RESULTS/index.html" <<HTML
 <meta charset="utf-8">
 <title>waste-submit-performance-tests</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; color: #0b0c0c; }
+  body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; color: #0b0c0c; }
   table { border-collapse: collapse; width: 100%; }
   th, td { text-align: left; padding: .5rem; border-bottom: 1px solid #b1b4b6; }
   .pass { color: #00703c; font-weight: 600; }
   .fail { color: #d4351c; font-weight: 600; }
   .skipped { color: #505a5f; }
   .meta { color: #505a5f; }
+  .num { text-align: right; white-space: nowrap; }
+  .scroll { overflow-x: auto; }
 </style>
 </head>
 <body>
 <h1>waste-submit-reg-packaging-api performance: ${OVERALL}</h1>
 <p class="meta">$(date -u +"%Y-%m-%d %H:%M:%S UTC") · environment ${ENVIRONMENT} · profile ${PROFILE} · run ${RUN_ID:-local}</p>
-<p class="meta">Target ${TARGET}. Thresholds: p95 under ${P95_MS:-2000} ms per endpoint, errors under $(awk "BEGIN { print ${ERROR_RATE:-0.01} * 100 }")%.</p>
+<p class="meta">Target ${TARGET}. Thresholds: p95 under ${P95_MS:-10000} ms per endpoint, errors under $(awk "BEGIN { print ${ERROR_RATE:-0.01} * 100 }")%.</p>
+<div class="scroll">
 <table>
-<thead><tr><th>Test</th><th>Result</th><th>Details</th></tr></thead>
+<thead><tr><th>Test</th><th>Result</th><th class="num">Requests</th><th class="num">Avg</th><th class="num">p95</th><th class="num">Failed</th><th class="num">Checks</th><th>p95 by endpoint</th><th>Details</th></tr></thead>
 <tbody>
 ${ROWS}</tbody>
 </table>
-<p class="meta">k6 only draws an HTML report for runs long enough to chart, so the smoke and burst tests have a summary and log only.</p>
+</div>
+<p class="meta">Report: every metric, threshold and check. Dashboard: k6's charts over time, only for runs long enough to chart. Log: k6's full output.</p>
 </body>
 </html>
 HTML

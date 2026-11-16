@@ -16,6 +16,8 @@ services:
     environment:
       ENVIRONMENT: local
       BASE_URL: http://service:8085
+      API_CLIENT_ID: PerformanceTests
+      API_CLIENT_SECRET: performance-tests-pwd
       PROFILE: ${PROFILE:-all}
       DURATION: ${DURATION:-5m}
       S3_ENDPOINT: http://localstack:4566
@@ -62,6 +64,9 @@ services:
       - 'compose/aws.env'
     environment:
       ASPNETCORE_URLS: http://+:8085
+      Acl__Clients__PerformanceTests__Type: ApiKey
+      Acl__Clients__PerformanceTests__Secret: performance-tests-pwd
+      Acl__Clients__PerformanceTests__Scopes__0: read
       Postgres__Host: postgres
       Postgres__UseIamAuthentication: false
       Postgres__SslMode: Disable
