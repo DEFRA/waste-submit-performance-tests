@@ -3,8 +3,9 @@ FROM grafana/k6:2.3.0 AS k6
 
 FROM alpine:3.22
 
-# The AWS CLI publishes the results to the S3 path the CDP Portal gives each run.
-RUN apk add --no-cache aws-cli
+# The AWS CLI publishes the results to the S3 path the CDP Portal gives each run; jq
+# reads each test's summary.json into the index page.
+RUN apk add --no-cache aws-cli jq
 
 COPY --from=k6 /usr/bin/k6 /usr/local/bin/k6
 

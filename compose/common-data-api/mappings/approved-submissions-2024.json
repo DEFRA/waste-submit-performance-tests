@@ -1,0 +1,21 @@
+{
+  "priority": 1,
+  "request": {
+    "method": "GET",
+    "urlPath": "/api/submissions/v1/pom/approved-submissions/2024"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": [
+      { "submitterType": "DirectRegistrant", "submitterId": "11111111-1111-4111-8111-111111111111", "organisationId": "11111111-1111-4111-8111-111111111111", "packagingMaterial": "PL", "packagingMaterialWeightKg": 400000 },
+      { "submitterType": "DirectRegistrant", "submitterId": "11111111-1111-4111-8111-111111111111", "organisationId": "11111111-1111-4111-8111-111111111111", "packagingMaterial": "PL", "packagingMaterialWeightKg": 12350 },
+      { "submitterType": "DirectRegistrant", "submitterId": "11111111-1111-4111-8111-111111111111", "organisationId": "11111111-1111-4111-8111-111111111111", "packagingMaterial": "PC", "packagingMaterialWeightKg": 655120 },
+      { "submitterType": "ComplianceScheme", "submitterId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "organisationId": "22222222-2222-4222-8222-222222222222", "packagingMaterial": "PL", "packagingMaterialWeightKg": 100000 },
+      { "submitterType": "ComplianceScheme", "submitterId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "organisationId": "22222222-2222-4222-8222-222222222222", "packagingMaterial": "AL", "packagingMaterialWeightKg": 25000 },
+      { "submitterType": "ComplianceScheme", "submitterId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "organisationId": "33333333-3333-4333-8333-333333333333", "packagingMaterial": "GL", "packagingMaterialWeightKg": 64000 },
+      { "submitterType": "ComplianceScheme", "submitterId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "organisationId": "44444444-4444-4444-8444-444444444444", "packagingMaterial": "GL", "packagingMaterialWeightKg": 64000, "leaverCode": "13", "leaverDate": "2024-09-30T00:00:00" },
+      { "submitterType": "ComplianceScheme", "submitterId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "organisationId": "55555555-5555-4555-8555-555555555555", "packagingMaterial": "PC", "packagingMaterialWeightKg": 18000 }
+    ]
+  }
+}

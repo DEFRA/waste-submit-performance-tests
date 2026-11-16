@@ -1,12 +1,13 @@
-// Burst: several consumers ask for every submitter's totals at the same moment, the
-// way Obligations fans out one request per submitter. It checks response times hold
-// up under that short concurrency. It is not a stress or spike test.
+// Burst: several consumers ask for every submitter's totals at the same moment. 
+// It checks response times hold up under that short concurrency.
+// It is not a stress or spike test.
 //
 // BURST_VUS (default 10) consumers each make BURST_ITERATIONS (default 3) rounds.
 // Each round requests every submitter in SUBMITTER_IDS in parallel.
 import http from 'k6/http'
 import { endpoints, params, submitterIds } from '../lib/config.js'
 import { checkItemsResponse } from '../lib/checks.js'
+import { buildHandleSummary } from '../lib/summary.js'
 import { loadThresholds } from '../lib/thresholds.js'
 
 export const options = {
@@ -29,3 +30,5 @@ export default function () {
     checkItemsResponse(res, 'for-submitter')
   }
 }
+
+export const handleSummary = buildHandleSummary('burst')

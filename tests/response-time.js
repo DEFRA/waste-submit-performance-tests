@@ -6,6 +6,7 @@
 import http from 'k6/http'
 import { endpoints, params, pickSubmitterId } from '../lib/config.js'
 import { checkItemsResponse } from '../lib/checks.js'
+import { buildHandleSummary } from '../lib/summary.js'
 import { loadThresholds } from '../lib/thresholds.js'
 
 const rate = Number(__ENV.RATE_PER_MIN || 30)
@@ -39,3 +40,5 @@ export function bySubmitter() {
 export function forSubmitter() {
   checkItemsResponse(http.get(endpoints.forSubmitter(pickSubmitterId()), params('for-submitter')), 'for-submitter')
 }
+
+export const handleSummary = buildHandleSummary('response-time')
