@@ -108,7 +108,7 @@ epr-common-data-api, change the stub's mappings with it, or the pull request che
 To run one script against a service on your own machine with k6 installed (`brew install k6`):
 
 ```bash
-ENVIRONMENT=local BASE_URL=http://localhost:8085 API_CLIENT_ID=Developer API_CLIENT_SECRET=developer-pwd k6 run tests/smoke.js
+ENVIRONMENT=local SERVICE_URL=http://localhost:8085 API_CLIENT_ID=Developer API_CLIENT_SECRET=developer-pwd k6 run tests/smoke.js
 ```
 
 To run from a laptop against a deployed service, go through the developer API gateway with the AWS OpenVPN connected,
@@ -117,7 +117,7 @@ client credentials:
 
 ```bash
 ENVIRONMENT=perf-test \
-  BASE_URL=https://ephemeral-protected.api.perf-test.cdp-int.defra.cloud/waste-submit-reg-packaging-api \
+  SERVICE_URL=https://ephemeral-protected.api.perf-test.cdp-int.defra.cloud/waste-submit-reg-packaging-api \
   X_API_KEY=<developer API key> API_CLIENT_ID=<client id> API_CLIENT_SECRET=<secret> \
   k6 run tests/smoke.js
 ```
@@ -163,7 +163,7 @@ secrets are set, so the defaults apply.
 | `API_CLIENT_ID` | CDP secret | The client the suite calls the service as. **Required** |
 | `API_CLIENT_SECRET` | CDP secret | That client's secret. **Required** |
 | `X_API_KEY` | Unset | A Developer API key, sent as `x-api-key`. Only for runs through the developer API gateway |
-| `BASE_URL` | `https://waste-submit-reg-packaging-api.<ENVIRONMENT>.cdp-int.defra.cloud` | Where the service is |
+| `SERVICE_URL` | `https://waste-submit-reg-packaging-api.<ENVIRONMENT>.cdp-int.defra.cloud` | Where the service is. Not `BASE_URL`: CDP runs have had that set to the environment's root domain, where every path is a 404, so the suite ignores it |
 | `PACKAGING_YEAR` | `2024` | The year asked for |
 | `SUBMITTER_IDS` | The two stub submitters | Comma-separated submitter organisation IDs to ask for |
 | `RATE_PER_MIN` | `30` | `response-time`: requests a minute, per endpoint |
