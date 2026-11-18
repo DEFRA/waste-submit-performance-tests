@@ -53,10 +53,10 @@ add_row() {
 "
 }
 
-EMPTY_STATS='<td class="num">-</td><td class="num">-</td><td class="num">-</td><td class="num">-</td><td class="num">-</td><td>-</td>'
+EMPTY_STATS='<td class="num">-</td><td class="num">-</td><td class="num">-</td><td class="num">-</td><td class="num">-</td><td>-</td><td>-</td>'
 
-# Requests, avg, p95, failed %, checks % and p95 per endpoint, from the summary.json
-# the test's handleSummary wrote.
+# Requests, avg, p95, failed %, checks %, p95 per endpoint and failed responses by status,
+# from the summary.json the test's handleSummary wrote. Status 0 means no response at all.
 stats_cells() {
   if [ ! -f "$1" ] || ! command -v jq >/dev/null 2>&1; then
     echo "$EMPTY_STATS"
@@ -69,12 +69,19 @@ stats_cells() {
     ([$m | to_entries[] | select(.key | startswith("http_req_duration{endpoint:"))
       | (.key | ltrimstr("http_req_duration{endpoint:") | rtrimstr("}")) + " " + ms(.value.values["p(95)"])]
       | join("<br>")) as $byEndpoint |
+    ($m.failed_responses.values.count // 0) as $failedTotal |
+    [$m | to_entries[] | select(.key | startswith("failed_responses{status:")) | select(.value.values.count > 0)
+      | {status: (.key | ltrimstr("failed_responses{status:") | rtrimstr("}")), count: .value.values.count}] as $byStatus |
+    ($failedTotal - ([$byStatus[].count] | add // 0)) as $otherStatuses |
+    (([$byStatus[] | "\(.status): \(.count)"] + (if $otherStatuses > 0 then ["other: \($otherStatuses)"] else [] end))
+      | join("<br>")) as $failures |
     "<td class=\"num\">" + (($m.http_reqs.values.count // 0) | tostring) + "</td>" +
     "<td class=\"num\">" + ms($m.http_req_duration.values.avg) + "</td>" +
     "<td class=\"num\">" + ms($m.http_req_duration.values["p(95)"]) + "</td>" +
     "<td class=\"num\">" + pct($m.http_req_failed.values.rate) + "</td>" +
     "<td class=\"num\">" + pct($m.checks.values.rate) + "</td>" +
-    "<td>" + (if $byEndpoint == "" then "-" else $byEndpoint end) + "</td>"
+    "<td>" + (if $byEndpoint == "" then "-" else $byEndpoint end) + "</td>" +
+    "<td>" + (if $failures == "" then "-" else $failures end) + "</td>"
   ' "$1" 2>/dev/null || echo "$EMPTY_STATS"
 }
 
@@ -157,12 +164,12 @@ cat >"$RESULTS/index.html" <<HTML
 <p class="meta">Target ${TARGET}. Thresholds: p95 under ${P95_MS:-10000} ms per endpoint, errors under $(awk "BEGIN { print ${ERROR_RATE:-0.01} * 100 }")%.</p>
 <div class="scroll">
 <table>
-<thead><tr><th>Test</th><th>Result</th><th class="num">Requests</th><th class="num">Avg</th><th class="num">p95</th><th class="num">Failed</th><th class="num">Checks</th><th>p95 by endpoint</th><th>Details</th></tr></thead>
+<thead><tr><th>Test</th><th>Result</th><th class="num">Requests</th><th class="num">Avg</th><th class="num">p95</th><th class="num">Failed</th><th class="num">Checks</th><th>p95 by endpoint</th><th>Failures by status</th><th>Details</th></tr></thead>
 <tbody>
 ${ROWS}</tbody>
 </table>
 </div>
-<p class="meta">Report: every metric, threshold and check. Dashboard: k6's charts over time, only for runs long enough to chart. Log: k6's full output.</p>
+<p class="meta">Report: every metric, threshold and check. Dashboard: k6's charts over time, only for runs long enough to chart. Failures by status: responses that weren't the expected status, where 0 means no response (DNS, TLS, refused connection or timeout). Log: k6's full output, with a <code>failed response</code> line for the first few of each, showing the URL, status, error and the start of the body.</p>
 </body>
 </html>
 HTML

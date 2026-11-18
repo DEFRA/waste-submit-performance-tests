@@ -172,6 +172,7 @@ secrets are set, so the defaults apply.
 | `BURST_ITERATIONS` | `3` | `burst`: rounds per consumer |
 | `P95_MS` | `10000` | The p95 limit for one run |
 | `ERROR_RATE` | `0.01` | The failed-request limit for one run |
+| `LOG_FAILURES` | `5` | Failed responses each VU logs per endpoint and status. `0` turns the logging off |
 | `RESULTS_OUTPUT_S3_PATH` | Set by CDP | Where the results are uploaded. Nothing is uploaded when it is unset |
 
 ## Results
@@ -181,7 +182,7 @@ Each run writes everything to `results/`, and [entrypoint.sh](entrypoint.sh) cop
 report link opens `index.html`.
 
 - `index.html`: each test's result, requests, average and p95 response time, failed requests, checks, p95 for each
-  endpoint, and links to the files below.
+  endpoint, failed responses by status, and links to the files below.
 - `<test>/summary.html`: a report of every metric, threshold and check, for every test.
 - `<test>/dashboard.html`: k6's web dashboard, with charts of response times and request rates over the run. k6 only
   draws it for a run long enough to chart, so `smoke` and `burst` don't have one.
@@ -195,6 +196,22 @@ the web because the CDP proxy blocks k6's remote imports. A new test needs
 `export const handleSummary = buildHandleSummary('<test>')`.
 
 The suite fails (exits 1) when any test misses a threshold, errors, or is skipped because `smoke` failed.
+
+### When requests fail
+
+Every response that isn't a 200 is counted in `failed_responses`, tagged with its endpoint and status. The
+**Failures by status** column in `index.html` and the `failed_responses{status:...}` rows in `summary.html` show the
+counts. Status `0` means there was no response at all: DNS, TLS, a refused connection or a timeout.
+
+The log has a `failed response` line, as JSON, for the first `LOG_FAILURES` of each endpoint and status per VU, with the
+URL, status, duration, k6's `error` and `errorCode` for a network failure, and the first 500 characters of the body. A
+401 or 403 adds a hint about the client secrets. The request headers, which hold the API key, are never logged.
+
+```
+failed response {"endpoint":"by-submitter","status":500,"url":"https://...","durationMs":12,"contentType":"application/problem+json","body":"{\"title\":\"System.Net.Http.HttpRequestException\", ..."}
+```
+
+The same lines are in the run's logs in the CDP Portal and in `logs/<test>.log` in the results.
 
 ## Layout
 

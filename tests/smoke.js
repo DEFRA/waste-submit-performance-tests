@@ -1,9 +1,9 @@
 // Smoke: one request to each endpoint, to prove the service is up and the test data
 // is right before any timed test runs. The runner stops if this fails.
 import http from 'k6/http'
-import { check } from 'k6'
 import { endpoints, params, submitterIds } from '../lib/config.js'
-import { checkItemsResponse } from '../lib/checks.js'
+import { checkItemsResponse, checkStatus } from '../lib/checks.js'
+import { failureThresholds } from '../lib/thresholds.js'
 import { buildHandleSummary } from '../lib/summary.js'
 
 export const options = {
@@ -16,14 +16,14 @@ export const options = {
     }
   },
   thresholds: {
+    ...failureThresholds(),
     checks: ['rate==1.0'],
     http_req_failed: ['rate==0']
   }
 }
 
 export default function () {
-  const health = http.get(endpoints.health(), params('health'))
-  check(health, { 'health: status is 200': (r) => r.status === 200 })
+  checkStatus(http.get(endpoints.health(), params('health')), 'health')
 
   checkItemsResponse(http.get(endpoints.bySubmitter(), params('by-submitter')), 'by-submitter')
 
