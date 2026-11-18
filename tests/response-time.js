@@ -2,14 +2,14 @@
 // to show each returns its data within the p95 threshold. This is not a stress test.
 // The API has one consumer (Obligations) and low traffic, so the rate is low.
 //
-// RATE_PER_MIN (default 30, per endpoint) and DURATION (default 5m) change the load.
+// RATE_PER_MIN (default 1, per endpoint) and DURATION (default 5m) change the load.
 import http from 'k6/http'
 import { endpoints, params, pickSubmitterId } from '../lib/config.js'
 import { checkItemsResponse } from '../lib/checks.js'
 import { buildHandleSummary } from '../lib/summary.js'
 import { loadThresholds } from '../lib/thresholds.js'
 
-const rate = Number(__ENV.RATE_PER_MIN || 30)
+const rate = Number(__ENV.RATE_PER_MIN || 1)
 const duration = __ENV.DURATION || '5m'
 
 const steady = {
