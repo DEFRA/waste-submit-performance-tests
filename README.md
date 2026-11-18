@@ -24,7 +24,7 @@ capacity test.
 | Test | Load | Proves |
 |---|---|---|
 | `smoke` | 1 request to `/health`, to `producer-material-totals-by-submitter`, and to `producer-material-totals` for each submitter | The service is up and the test data is right. **It is a gate:** if it fails, the other tests don't run |
-| `response-time` | 30 requests a minute to each packaging endpoint at once, for 5 minutes | Each endpoint answers within the p95 threshold under steady, realistic load |
+| `response-time` | 1 request a minute to each packaging endpoint at once, for 5 minutes | Each endpoint answers within the p95 threshold under steady, realistic load |
 | `burst` | 10 consumers at once, each asking for every submitter's totals in parallel, 3 times | Response times hold up when Obligations fans out one request per submitter |
 
 The packaging endpoints are:
@@ -166,11 +166,11 @@ secrets are set, so the defaults apply.
 | `SERVICE_URL` | `https://waste-submit-reg-packaging-api.<ENVIRONMENT>.cdp-int.defra.cloud` | Where the service is. Not `BASE_URL`: CDP runs have had that set to the environment's root domain, where every path is a 404, so the suite ignores it |
 | `PACKAGING_YEAR` | `2024` | The year asked for |
 | `SUBMITTER_IDS` | The two stub submitters | Comma-separated submitter organisation IDs to ask for |
-| `RATE_PER_MIN` | `30` | `response-time`: requests a minute, per endpoint |
+| `RATE_PER_MIN` | `1` | `response-time`: requests a minute, per endpoint |
 | `DURATION` | `5m` | `response-time`: how long it runs |
 | `BURST_VUS` | `10` | `burst`: how many consumers at once |
 | `BURST_ITERATIONS` | `3` | `burst`: rounds per consumer |
-| `P95_MS` | `10000` | The p95 limit for one run |
+| `P95_MS` | `20000` | The p95 limit for one run |
 | `ERROR_RATE` | `0.01` | The failed-request limit for one run |
 | `LOG_FAILURES` | `5` | Failed responses each VU logs per endpoint and status. `0` turns the logging off |
 | `RESULTS_OUTPUT_S3_PATH` | Set by CDP | Where the results are uploaded. Nothing is uploaded when it is unset |

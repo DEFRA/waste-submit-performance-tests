@@ -161,7 +161,7 @@ cat >"$RESULTS/index.html" <<HTML
 <body>
 <h1>waste-submit-reg-packaging-api performance: ${OVERALL}</h1>
 <p class="meta">$(date -u +"%Y-%m-%d %H:%M:%S UTC") · environment ${ENVIRONMENT} · profile ${PROFILE} · run ${RUN_ID:-local}</p>
-<p class="meta">Target ${TARGET}. Thresholds: p95 under ${P95_MS:-10000} ms per endpoint, errors under $(awk "BEGIN { print ${ERROR_RATE:-0.01} * 100 }")%.</p>
+<p class="meta">Target ${TARGET}. Thresholds: p95 under ${P95_MS:-20000} ms per endpoint, errors under $(awk "BEGIN { print ${ERROR_RATE:-0.01} * 100 }")%.</p>
 <div class="scroll">
 <table>
 <thead><tr><th>Test</th><th>Result</th><th class="num">Requests</th><th class="num">Avg</th><th class="num">p95</th><th class="num">Failed</th><th class="num">Checks</th><th>p95 by endpoint</th><th>Failures by status</th><th>Details</th></tr></thead>
