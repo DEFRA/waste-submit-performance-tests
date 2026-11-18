@@ -27,7 +27,7 @@ PROFILE=${PROFILE:-all}
 ROOT=$(cd "$(dirname "$0")" && pwd)
 RESULTS=${ROOT}/results
 LOGS=${RESULTS}/logs
-TARGET=${BASE_URL:-https://waste-submit-reg-packaging-api.${ENVIRONMENT}.cdp-int.defra.cloud}
+TARGET=${SERVICE_URL:-https://waste-submit-reg-packaging-api.${ENVIRONMENT}.cdp-int.defra.cloud}
 
 case "$PROFILE" in
   all) TESTS="smoke response-time burst" ;;
@@ -41,7 +41,7 @@ esac
 rm -rf "$RESULTS"
 mkdir -p "$LOGS"
 
-echo "run_id=${RUN_ID:-local} environment=$ENVIRONMENT profile=$PROFILE target=$TARGET client=$API_CLIENT_ID x_api_key=$([ -n "$X_API_KEY" ] && echo set || echo unset)"
+echo "run_id=${RUN_ID:-local} environment=$ENVIRONMENT profile=$PROFILE target=$TARGET client=$API_CLIENT_ID x_api_key=$([ -n "$X_API_KEY" ] && echo set || echo unset) base_url_ignored=${BASE_URL:-unset}"
 
 ROWS=""
 EXIT_CODE=0

@@ -16,7 +16,7 @@ services:
       - 'compose/aws.env'
     environment:
       ENVIRONMENT: local
-      BASE_URL: http://service:8085
+      SERVICE_URL: http://service:8085
       API_CLIENT_ID: PerformanceTests
       API_CLIENT_SECRET: performance-tests-pwd
       PROFILE: ${PROFILE:-all}
