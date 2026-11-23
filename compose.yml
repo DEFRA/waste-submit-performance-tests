@@ -1,6 +1,6 @@
 # Runs the suite locally against a released image of waste-submit-reg-packaging-api,
-# with Postgres for the service, a WireMock stub standing in for epr-common-data-api
-# (compose/common-data-api) and LocalStack standing in for the results bucket.
+# with Postgres for the service, waste-submit-stubs standing in for epr-common-data-api
+# and LocalStack standing in for the results bucket.
 #   docker compose up --build --exit-code-from development
 services:
   development:
@@ -10,6 +10,8 @@ services:
     depends_on:
       service:
         condition: service_healthy
+      waste-submit-stubs:
+        condition: service_healthy
       localstack:
         condition: service_healthy
     env_file:
@@ -17,6 +19,10 @@ services:
     environment:
       ENVIRONMENT: local
       SERVICE_URL: http://service:8085
+      STUB_URL: http://waste-submit-stubs:8085
+      UPSTREAM: ${UPSTREAM:-stub}
+      PACKAGING_YEAR: ${PACKAGING_YEAR:-2025}
+      P95_MS: ${P95_MS:-20000}
       API_CLIENT_ID: PerformanceTests
       API_CLIENT_SECRET: performance-tests-pwd
       PROFILE: ${PROFILE:-all}
@@ -56,15 +62,18 @@ services:
     networks:
       - performance-tests
 
-  # epr-common-data-api, where the service reads approved submissions from. The
-  # mappings serve synthetic data for 2024 and 204 for any other year.
-  common-data-api:
-    image: wiremock/wiremock:3.9.1
-    command: ['--disable-banner']
-    volumes:
-      - ./compose/common-data-api/mappings:/home/wiremock/mappings:ro
+  # epr-common-data-api, where the service reads approved submissions from: the same
+  # waste-submit-stubs image that runs in perf-test. 2024 to 2027 are sized from production
+  # counts and 2023 is small fixed data. COMMON_DATA_API_LATENCY_MS and
+  # COMMON_DATA_API_LATENCY_JITTER_MS simulate the upstream's database time (default none).
+  waste-submit-stubs:
+    image: defradigital/waste-submit-stubs:${STUBS_VERSION:-latest}
+    environment:
+      ASPNETCORE_URLS: http://+:8085
+      CommonDataApi__ApprovedSubmissions__LatencyMs: ${COMMON_DATA_API_LATENCY_MS:-0}
+      CommonDataApi__ApprovedSubmissions__LatencyJitterMs: ${COMMON_DATA_API_LATENCY_JITTER_MS:-0}
     healthcheck:
-      test: ['CMD', 'curl', '-fs', 'http://localhost:8080/__admin/health']
+      test: ['CMD', 'curl', '-fs', 'http://localhost:8085/health']
       interval: 3s
       start_period: 5s
       retries: 10
@@ -76,7 +85,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      common-data-api:
+      waste-submit-stubs:
         condition: service_healthy
     env_file:
       - 'compose/aws.env'
@@ -85,7 +94,7 @@ services:
       Acl__Clients__PerformanceTests__Type: ApiKey
       Acl__Clients__PerformanceTests__Secret: performance-tests-pwd
       Acl__Clients__PerformanceTests__Scopes__0: read
-      CommonDataApi__BaseUrl: http://common-data-api:8080
+      CommonDataApi__BaseUrl: http://waste-submit-stubs:8085/epr-common-data-api
       Postgres__Host: postgres
       Postgres__UseIamAuthentication: false
       Postgres__SslMode: Disable

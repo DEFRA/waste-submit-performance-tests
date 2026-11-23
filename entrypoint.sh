@@ -3,8 +3,9 @@
 # RESULTS_OUTPUT_S3_PATH is set, uploads the results to S3.
 #
 # PROFILE picks the tests. CDP Portal passes it from the run's profile field.
-#   all (default)                   smoke, then response-time and burst. Stops if smoke fails.
-#   smoke | response-time | burst   that test only.
+#   all (default)                   smoke, then response-time. Stops if smoke fails.
+#   smoke | response-time | burst   that test only. burst is an occasional stress check,
+#                                   so it isn't part of all.
 
 if [ -z "$ENVIRONMENT" ]; then
   echo "Error: ENVIRONMENT is not set" >&2
@@ -30,7 +31,7 @@ LOGS=${RESULTS}/logs
 TARGET=${SERVICE_URL:-https://waste-submit-reg-packaging-api.${ENVIRONMENT}.cdp-int.defra.cloud}
 
 case "$PROFILE" in
-  all) TESTS="smoke response-time burst" ;;
+  all) TESTS="smoke response-time" ;;
   smoke | response-time | burst) TESTS="$PROFILE" ;;
   *)
     echo "Error: unknown PROFILE '$PROFILE'. Use all, smoke, response-time or burst." >&2
@@ -41,7 +42,7 @@ esac
 rm -rf "$RESULTS"
 mkdir -p "$LOGS"
 
-echo "run_id=${RUN_ID:-local} environment=$ENVIRONMENT profile=$PROFILE target=$TARGET client=$API_CLIENT_ID x_api_key=$([ -n "$X_API_KEY" ] && echo set || echo unset) base_url_ignored=${BASE_URL:-unset}"
+echo "run_id=${RUN_ID:-local} environment=$ENVIRONMENT profile=$PROFILE upstream=${UPSTREAM:-stub} target=$TARGET client=$API_CLIENT_ID x_api_key=$([ -n "$X_API_KEY" ] && echo set || echo unset) base_url_ignored=${BASE_URL:-unset}"
 
 ROWS=""
 EXIT_CODE=0
@@ -140,6 +141,27 @@ done
 
 if [ "$EXIT_CODE" -eq 0 ]; then OVERALL="Passed"; else OVERALL="Failed"; fi
 
+# What the run ran against, from the stub.json the first test that ran wrote (lib/summary.js).
+STUB_LINE="Upstream: not recorded."
+for test in $TESTS; do
+  file="$RESULTS/$test/stub.json"
+  if [ -f "$file" ] && command -v jq >/dev/null 2>&1; then
+    STUB_LINE=$(jq -r '
+      if .used == true then
+        "Upstream: waste-submit-stubs \(.version) at \(.url), epr-common-data-api \(.year) dataset \(.profile)" +
+        (if .sizes then " (\(.sizes))" else "" end) +
+        ", \(.rowCount) rows, \(.bytes) bytes, \(.submitterCount) submitters. Simulated latency \(.latencyMs) ms + 0 to \(.latencyJitterMs) ms."
+      elif .used == false then
+        "Upstream: \(.upstreamLabel) (UPSTREAM=real), \(.submitters) submitters for \(.packagingYear). " +
+        (if .checkedAgainstStub then "Smoke compared its submitters with those of waste-submit-stubs, to show it was not reading from the stub: see the smoke checks."
+         else "waste-submit-stubs was not reachable, so the run was not checked against it." end)
+      else "Upstream: not recorded." end
+    ' "$file" 2>/dev/null || echo "Upstream: not recorded.")
+    echo "$STUB_LINE"
+    break
+  fi
+done
+
 cat >"$RESULTS/index.html" <<HTML
 <!doctype html>
 <html lang="en">
@@ -161,7 +183,8 @@ cat >"$RESULTS/index.html" <<HTML
 <body>
 <h1>waste-submit-reg-packaging-api performance: ${OVERALL}</h1>
 <p class="meta">$(date -u +"%Y-%m-%d %H:%M:%S UTC") · environment ${ENVIRONMENT} · profile ${PROFILE} · run ${RUN_ID:-local}</p>
-<p class="meta">Target ${TARGET}. Thresholds: p95 under ${P95_MS:-20000} ms per endpoint, errors under $(awk "BEGIN { print ${ERROR_RATE:-0.01} * 100 }")%.</p>
+<p class="meta">${STUB_LINE}</p>
+<p class="meta">Target ${TARGET}. Packaging year ${PACKAGING_YEAR:-2025}. Thresholds: p95 under ${P95_MS:-20000} ms per endpoint, errors under $(awk "BEGIN { print ${ERROR_RATE:-0.01} * 100 }")%.</p>
 <div class="scroll">
 <table>
 <thead><tr><th>Test</th><th>Result</th><th class="num">Requests</th><th class="num">Avg</th><th class="num">p95</th><th class="num">Failed</th><th class="num">Checks</th><th>p95 by endpoint</th><th>Failures by status</th><th>Details</th></tr></thead>
