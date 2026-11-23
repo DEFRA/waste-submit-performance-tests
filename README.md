@@ -8,6 +8,7 @@ Portal in the `perf-test` environment. They cover
 - [Thresholds](#thresholds)
 - [Running in CDP](#running-in-cdp)
 - [Running locally](#running-locally)
+- [Stub or real epr-common-data-api](#stub-or-real-epr-common-data-api)
 - [Authentication](#authentication)
 - [Settings](#settings)
 - [Results](#results)
@@ -23,9 +24,9 @@ capacity test.
 
 | Test | Load | Proves |
 |---|---|---|
-| `smoke` | 1 request to `/health`, to `producer-material-totals-by-submitter`, and to `producer-material-totals` for each submitter | The service is up and the test data is right. **It is a gate:** if it fails, the other tests don't run |
-| `response-time` | 1 request a minute to each packaging endpoint at once, for 5 minutes | Each endpoint answers within the p95 threshold under steady, realistic load |
-| `burst` | 10 consumers at once, each asking for every submitter's totals in parallel, 3 times | Response times hold up when Obligations fans out one request per submitter |
+| `smoke` | 1 request to `/health`, to `producer-material-totals-by-submitter`, and to `producer-material-totals` for the 2 largest submitters. With the stub, also its `/health` | The service is up, the test data is right and, with the stub, that `by-submitter` returns exactly the stub's submitters, so the service is reading from the stub. **It is a gate:** if it fails, the other tests don't run |
+| `response-time` | 1 request a minute to each packaging endpoint at once, for 5 minutes | Each endpoint answers within the p95 threshold under steady, realistic load. Obligations calls `by-submitter` about once a day and `for-submitter` a few times an hour at most |
+| `burst` | 10 consumers at once, each asking for 10 submitters' totals in parallel, 3 times | An occasional stress check, well above Obligations' real traffic. **Not part of the regular run**: run it with the `burst` profile |
 
 The packaging endpoints are:
 
@@ -39,10 +40,14 @@ A test fails if any of these are missed. They are in [lib/thresholds.js](lib/thr
 
 | Measure | Limit |
 |---|---|
-| Response time, p95, for each endpoint separately | Under 2000 ms |
+| Response time, p95, for each endpoint separately | Under 20 s (`P95_MS`, default 20000) |
 | Failed requests | Under 1% (smoke: none) |
 | Checks (status 200, `items` is an array) | Over 99% (smoke: all) |
 | Dropped iterations (`response-time` only) | None |
+
+The 20 s p95 is for runs with the stub's Typical latency, 7.4 to 14.2 s upstream, which is how `perf-test` runs: it's
+what Obligations would see. With the stub's latency at None, to measure the service's own cost, use `P95_MS=2000`.
+Both are working figures until business stakeholders agree them, as the EPR Test Strategy requires (SUB-445).
 
 
 ## Running in CDP
@@ -63,7 +68,7 @@ The Portal passes the run's profile to the suite as `PROFILE`.
 
 | Profile | Runs |
 |---|---|
-| empty or `all` | `smoke`, then `response-time` and `burst`. Takes about 6 minutes |
+| empty or `all` | `smoke`, then `response-time`. Takes about 6 minutes |
 | `smoke` | `smoke` only |
 | `response-time` | `response-time` only |
 | `burst` | `burst` only |
@@ -83,8 +88,9 @@ CDP's guide to scheduled runs is
 
 ## Running locally
 
-You need Docker. [compose.yml](compose.yml) starts a released image of the API with its Postgres, a WireMock stub in
-place of epr-common-data-api, LocalStack in place of the results bucket, and the suite:
+You need Docker. [compose.yml](compose.yml) starts a released image of the API with its Postgres,
+[waste-submit-stubs](https://github.com/DEFRA/waste-submit-stubs) in place of epr-common-data-api, LocalStack in place
+of the results bucket, and the suite:
 
 ```bash
 docker compose up --build --exit-code-from development
@@ -101,9 +107,17 @@ docker compose run --rm -e PROFILE=smoke development
 `SERVICE_VERSION` picks the API image (default `latest`). The stack gives the service a local-only `PerformanceTests`
 client and the suite its credentials. Pull a newer `latest` with `docker compose pull service`.
 
-The stub, in [compose/common-data-api](compose/common-data-api/README.md), serves synthetic approved submissions for
-2024 for the two default `SUBMITTER_IDS`, and nothing for other years. If the service changes what it reads from
-epr-common-data-api, change the stub's mappings with it, or the pull request check will fail.
+The stub is the same image that runs in `perf-test` (`STUBS_VERSION`, default `latest`). It serves synthetic approved
+submissions sized from production counts for 2024 to 2027, about 32,000 rows and 11 MB a year, and the suite reads its
+submitters from the stub. Add upstream latency with its presets:
+
+```bash
+COMMON_DATA_API_LATENCY_MS=7443 COMMON_DATA_API_LATENCY_JITTER_MS=6754 docker compose up --build --exit-code-from development
+P95_MS=2000 docker compose up --build --exit-code-from development
+```
+
+The first is Typical latency, against the default 20 s p95. The second has no latency, against 2 s. If the service
+changes what it reads from epr-common-data-api, review waste-submit-stubs with it.
 
 To run one script against a service on your own machine with k6 installed (`brew install k6`):
 
@@ -127,6 +141,45 @@ Timings taken through the gateway include it, so use them to check the scripts, 
 Pull requests run the same Compose stack, with `DURATION=30s`, in
 [check-pull-request.yml](.github/workflows/check-pull-request.yml). That proves the scripts work, not the service's
 performance, which is only measured in `perf-test`.
+
+## Stub or real epr-common-data-api
+
+The service reads approved submissions from whatever its `CommonDataApi__BaseUrl` points at. By default that's
+[waste-submit-stubs](https://github.com/DEFRA/waste-submit-stubs), which serves synthetic data sized from production.
+To measure against a real epr-common-data-api instead, such as Azure TST1 or PRE1, change two files in cdp-app-config
+and redeploy the service:
+
+| File | Stub (default) | Real |
+|---|---|---|
+| `services/waste-submit-reg-packaging-api/perf-test/waste-submit-reg-packaging-api.env` | `CommonDataApi__BaseUrl=https://waste-submit-stubs.perf-test.cdp-int.defra.cloud/epr-common-data-api` | `CommonDataApi__BaseUrl=https://<the Azure web app>` |
+| `services/waste-submit-performance-tests/perf-test/waste-submit-performance-tests.env` | Nothing | `UPSTREAM=real` and `UPSTREAM_LABEL=Azure TST1` (or PRE1) |
+
+The suite can't read the service's setting, so `UPSTREAM` tells it which one to expect, and `smoke` checks the two
+agree:
+
+- **`UPSTREAM=stub`:** `by-submitter` must return exactly the stub's submitters for the year. Pointing the service at
+  a real upstream without changing the suite fails here.
+- **`UPSTREAM=real`:** `by-submitter` must return none of the stub's submitters. The stub's IDs are name-based UUIDs
+  that real data can't contain, so a service still pointing at the stub fails here. If the stub isn't deployed, the
+  check is skipped and the report says so.
+
+In real mode the suite finds its submitters from the service's own `by-submitter` response, so no IDs need copying in.
+Set `SUBMITTER_IDS` only to ask for particular ones.
+
+Before a real run:
+
+- **Tell the environment's owners.** TST1 and PRE1 are shared, and every packaging request makes epr-common-data-api run
+  its stored procedure, which takes 7 to 35 s in production. `response-time` at 1 request a minute is light. `burst`
+  refuses to run against a real upstream unless `ALLOW_BURST_ON_REAL=true` is set.
+- **Check the data.** The environment needs approved submissions with obligations for `PACKAGING_YEAR` (default 2025),
+  and the SUB-410 stored procedure deployed. Set `PACKAGING_YEAR` to a year it has.
+- **Check the limits.** The 20 s p95 and 60 s timeout were set from production's database time. A real run also
+  includes moving about 11 MB from Azure into CDP, so expect it to be slower than the stub's Typical latency.
+- **Proxy.** The service calls the Azure web apps through the CDP proxy. The TST and PRE web apps are on its perf-test
+  allow-list in cdp-tenant-config.
+
+Put both files back to the stub afterwards. The report's Upstream line records which upstream each run used, for the
+release evidence.
 
 ## Authentication
 
@@ -164,12 +217,19 @@ secrets are set, so the defaults apply.
 | `API_CLIENT_SECRET` | CDP secret | That client's secret. **Required** |
 | `X_API_KEY` | Unset | A Developer API key, sent as `x-api-key`. Only for runs through the developer API gateway |
 | `SERVICE_URL` | `https://waste-submit-reg-packaging-api.<ENVIRONMENT>.cdp-int.defra.cloud` | Where the service is. Not `BASE_URL`: CDP runs have had that set to the environment's root domain, where every path is a 404, so the suite ignores it |
-| `PACKAGING_YEAR` | `2024` | The year asked for |
-| `SUBMITTER_IDS` | The two stub submitters | Comma-separated submitter organisation IDs to ask for |
+| `PACKAGING_YEAR` | `2025` | The year asked for |
+| `STUB_URL` | `https://waste-submit-stubs.<ENVIRONMENT>.cdp-int.defra.cloud` | Where waste-submit-stubs is. The suite reads the year's submitters and the stub's settings from it |
+| `UPSTREAM` | `stub` | What the service reads from: `stub` (waste-submit-stubs) or `real`. See [Stub or real epr-common-data-api](#stub-or-real-epr-common-data-api) |
+| `UPSTREAM_LABEL` | `waste-submit-stubs`, or `real epr-common-data-api` | What the report calls the upstream, for example `Azure TST1` |
+| `SUBMITTER_IDS` | Found by the suite | Comma-separated submitter organisation IDs to ask for. Otherwise they come from the stub (`stub`) or from the service's `by-submitter` response (`real`) |
+| `ALLOW_BURST_ON_REAL` | Unset | `true` lets `burst` run with `UPSTREAM=real` |
+| `SMOKE_SUBMITTERS` | `2` | `smoke`: how many submitters to ask for one at a time, largest first |
+| `REQUEST_TIMEOUT` | `60s` | Each request's timeout, above PRD's slowest epr-common-data-api database time (35 s) |
 | `RATE_PER_MIN` | `1` | `response-time`: requests a minute, per endpoint |
 | `DURATION` | `5m` | `response-time`: how long it runs |
 | `BURST_VUS` | `10` | `burst`: how many consumers at once |
 | `BURST_ITERATIONS` | `3` | `burst`: rounds per consumer |
+| `BURST_SUBMITTERS` | `10` | `burst`: submitters asked for in each round, largest first. Every request fetches the whole year upstream |
 | `P95_MS` | `20000` | The p95 limit for one run |
 | `ERROR_RATE` | `0.01` | The failed-request limit for one run |
 | `LOG_FAILURES` | `5` | Failed responses each VU logs per endpoint and status. `0` turns the logging off |
@@ -181,13 +241,15 @@ Each run writes everything to `results/`, and [entrypoint.sh](entrypoint.sh) cop
 `RESULTS_OUTPUT_S3_PATH` the CDP Portal gives the run. The Portal's
 report link opens `index.html`.
 
-- `index.html`: each test's result, requests, average and p95 response time, failed requests, checks, p95 for each
+- `index.html`: what the run ran against (the stub's version, dataset, size and latency, or that `SUBMITTER_IDS` was
+  set and no stub was used), then each test's result, requests, average and p95 response time, failed requests, checks, p95 for each
   endpoint, failed responses by status, and links to the files below.
 - `<test>/summary.html`: a report of every metric, threshold and check, for every test.
 - `<test>/dashboard.html`: k6's web dashboard, with charts of response times and request rates over the run. k6 only
   draws it for a run long enough to chart, so `smoke` and `burst` don't have one.
 - `<test>/summary.json`: every metric. `index.html` is built from it.
 - `<test>/junit.xml`: each threshold as a JUnit test case.
+- `<test>/stub.json`: the stub's version, dataset and latency settings for that test, as read in its `setup()`.
 - `logs/<test>.log`: k6's full output, ending with its text summary.
 
 Each test's `handleSummary`, from [lib/summary.js](lib/summary.js), writes `summary.html`, `summary.json` and
@@ -231,11 +293,13 @@ request with `params('<endpoint>')` from `lib/config.js` so the thresholds can s
 
 ## Things to know
 
-- **Where the data comes from.** From 0.10.0 the API reads approved submissions from epr-common-data-api. Locally that
-  is the WireMock stub, which answers in a millisecond or two, so local timings leave out epr-common-data-api: they
-  prove the scripts work, not how fast the service is. In `perf-test` the service needs `CommonDataApi__BaseUrl` set
-  and a route to epr-common-data-api; without them the packaging endpoints fail and `smoke` stops the run. Point
-  `SUBMITTER_IDS` and `PACKAGING_YEAR` at submitters with approved data in `perf-test`. Test data must be synthetic.
+- **Where the data comes from.** From 0.10.0 the API reads approved submissions from epr-common-data-api. In
+  `perf-test` and locally that's waste-submit-stubs: the service's `CommonDataApi__BaseUrl` points at
+  `https://waste-submit-stubs.perf-test.cdp-int.defra.cloud/epr-common-data-api` in cdp-app-config. The stub's data
+  is synthetic, sized from production counts. Each run's report records the stub's version, dataset and latency, which
+  the release evidence needs.
+- **Both endpoints fetch the whole year upstream.** Every request costs about 11 MB from epr-common-data-api, and with
+  the stub's Typical latency, 7.4 to 14.2 s. That's why the p95 limit is 20 s and the request timeout 60 s.
 - **`producer-material-totals-by-submitter` is not paged.** It returns every approved submission for the year, so its
   response grows with real data. Watch its p95 and `data_received` most closely once real data lands.
 - **A cold service is slower.** The first requests after the service starts take longer while .NET warms up. With the
@@ -243,7 +307,8 @@ request with `params('<endpoint>')` from `lib/config.js` so the thresholds can s
 - **The CDP proxy.** The tests call the service directly inside CDP and don't set `HTTPS_PROXY`, so the timings leave
   the proxy out. If a first run in `perf-test` can't reach the service, check whether the call has to go through the
   proxy (`HTTP_PROXY`, `localhost:3128`).
-- **2-hour limit.** CDP stops any test run after 2 hours. The full suite takes about 6 minutes.
+- **2-hour limit.** CDP stops any test run after 2 hours. The full suite takes about 6 minutes, or about 7 with
+  Typical latency.
 
 ## Licence
 
