@@ -9,8 +9,8 @@
 // seconds.
 import http from 'k6/http'
 import { check } from 'k6'
-import { endpoints, params, stubUrl, testData } from '../lib/config.js'
-import { checkItemsResponse, checkStatus } from '../lib/checks.js'
+import { endpoints, params, stubUrl, submissionPeriodNames, testData } from '../lib/config.js'
+import { checkItemsResponse, checkPeriodResponse, checkPeriodsResponse, checkStatus } from '../lib/checks.js'
 import { failureThresholds } from '../lib/thresholds.js'
 import { buildHandleSummary } from '../lib/summary.js'
 
@@ -69,6 +69,19 @@ export default function (data) {
   for (const submitterId of data.submitterIds.slice(0, smokeSubmitters)) {
     checkItemsResponse(http.get(endpoints.forSubmitter(submitterId), params('for-submitter')), 'for-submitter')
   }
+
+  // The submission periods endpoints, which read the service's own database.
+  checkPeriodsResponse(http.get(endpoints.submissionPeriods(), params('submission-periods')), 'submission-periods')
+  checkPeriodsResponse(
+    http.get(endpoints.periodsForSubmitterType(), params('periods-for-submitter-type')),
+    'periods-for-submitter-type'
+  )
+  const submissionPeriod = submissionPeriodNames()[0]
+  checkPeriodResponse(
+    http.get(endpoints.periodForSubmitterType(submissionPeriod), params('period-for-submitter-type')),
+    'period-for-submitter-type',
+    submissionPeriod
+  )
 }
 
 function submitterIdsIn(res) {

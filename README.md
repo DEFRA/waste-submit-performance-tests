@@ -18,14 +18,22 @@ Portal in the `perf-test` environment. They cover
 
 ## What is tested
 
-waste-submit-reg-packaging-api is a read-only API with one consumer, the Obligations service, and low traffic. What
-matters is that it returns data in good time when Obligations asks for it, so there is no stress, spike, soak or
-capacity test.
+Only the API's **published** endpoints are tested: the ones in its v1 OpenAPI document. When an endpoint is
+published, add it here. Whether an endpoint is correct is not tested here; that is the API's own test project.
+
+The published endpoints are in two groups:
+
+- **Packaging**, for the Obligations service: low traffic, and slow because each call reads a whole year from
+  epr-common-data-api. What matters is that the data comes back in good time when Obligations asks for it.
+- **Submission periods**, for the frontends: called as pages load, and fast because they read a few rows from the
+  API's own database.
+
+Neither needs a stress, spike, soak or capacity test.
 
 | Test | Load | Proves |
 |---|---|---|
-| `smoke` | 1 request to `/health`, to `producer-material-totals-by-submitter`, and to `producer-material-totals` for the 2 largest submitters. With the stub, also its `/health` | The service is up, the test data is right and, with the stub, that `by-submitter` returns exactly the stub's submitters, so the service is reading from the stub. **It is a gate:** if it fails, the other tests don't run |
-| `response-time` | 1 request a minute to each packaging endpoint at once, for 5 minutes | Each endpoint answers within the p95 threshold under steady, realistic load. Obligations calls `by-submitter` about once a day and `for-submitter` a few times an hour at most |
+| `smoke` | 1 request to `/health`, to `producer-material-totals-by-submitter`, to `producer-material-totals` for the 2 largest submitters, and to each submission periods endpoint. With the stub, also its `/health` | The service is up, the test data is right and, with the stub, that `by-submitter` returns exactly the stub's submitters, so the service is reading from the stub. **It is a gate:** if it fails, the other tests don't run |
+| `response-time` | For 5 minutes, all at once: 1 request a minute to each packaging endpoint, and 60 a minute to each submission periods endpoint | Each endpoint answers within its p95 threshold under steady, realistic load. Obligations calls `by-submitter` about once a day and `for-submitter` a few times an hour at most. The submission periods rate is a working figure for page loads |
 | `burst` | 10 consumers at once, each asking for 10 submitters' totals in parallel, 3 times | An occasional stress check, well above Obligations' real traffic. **Not part of the regular run**: run it with the `burst` profile |
 
 The packaging endpoints are:
@@ -34,20 +42,30 @@ The packaging endpoints are:
 - `GET /packaging/{packagingYear}/submitter-organisation/{submitterOrganisationId}/producer-material-totals` (tagged
   `for-submitter`)
 
+The submission periods endpoints, always asked for as a compliance scheme, which sees every period:
+
+- `GET /submission-periods/packaging` (tagged `submission-periods`)
+- `GET /submission-periods/packaging/for-submitter-type` (tagged `periods-for-submitter-type`)
+- `GET /submission-periods/packaging/{submissionPeriod}/for-submitter-type` (tagged `period-for-submitter-type`), for
+  a period picked at random from those the service returns
+
 ## Thresholds
 
 A test fails if any of these are missed. They are in [lib/thresholds.js](lib/thresholds.js).
 
 | Measure | Limit |
 |---|---|
-| Response time, p95, for each endpoint separately | Under 20 s (`P95_MS`, default 20000) |
+| Response time, p95, for each packaging endpoint separately | Under 20 s (`P95_MS`, default 20000) |
+| Response time, p95, for each submission periods endpoint separately | Under 1 s (`PERIODS_P95_MS`, default 1000) |
 | Failed requests | Under 1% (smoke: none) |
-| Checks (status 200, `items` is an array) | Over 99% (smoke: all) |
+| Checks (status 200, and `items` is an array or at least one period is returned) | Over 99% (smoke: all) |
 | Dropped iterations (`response-time` only) | None |
 
 The 20 s p95 is for runs with the stub's Typical latency, 7.4 to 14.2 s upstream, which is how `perf-test` runs: it's
 what Obligations would see. With the stub's latency at None, to measure the service's own cost, use `P95_MS=2000`.
-Both are working figures until business stakeholders agree them, as the EPR Test Strategy requires (SUB-445).
+The 1 s p95 for the submission periods endpoints has no upstream in it: each is a simple lookup in the
+service's own database.
+The two packaging figures are working figures until business stakeholders agree them, as the EPR Test Strategy requires (SUB-445).
 
 
 ## Running in CDP
@@ -225,12 +243,14 @@ secrets are set, so the defaults apply.
 | `ALLOW_BURST_ON_REAL` | Unset | `true` lets `burst` run with `UPSTREAM=real` |
 | `SMOKE_SUBMITTERS` | `2` | `smoke`: how many submitters to ask for one at a time, largest first |
 | `REQUEST_TIMEOUT` | `60s` | Each request's timeout, above PRD's slowest epr-common-data-api database time (35 s) |
-| `RATE_PER_MIN` | `1` | `response-time`: requests a minute, per endpoint |
+| `RATE_PER_MIN` | `1` | `response-time`: requests a minute, per packaging endpoint |
+| `PERIODS_RATE_PER_MIN` | `60` | `response-time`: requests a minute, per submission periods endpoint |
 | `DURATION` | `5m` | `response-time`: how long it runs |
 | `BURST_VUS` | `10` | `burst`: how many consumers at once |
 | `BURST_ITERATIONS` | `3` | `burst`: rounds per consumer |
 | `BURST_SUBMITTERS` | `10` | `burst`: submitters asked for in each round, largest first. Every request fetches the whole year upstream |
-| `P95_MS` | `20000` | The p95 limit for one run |
+| `P95_MS` | `20000` | The p95 limit for the packaging endpoints, for one run |
+| `PERIODS_P95_MS` | `1000` | The p95 limit for the submission periods endpoints, for one run |
 | `ERROR_RATE` | `0.01` | The failed-request limit for one run |
 | `LOG_FAILURES` | `5` | Failed responses each VU logs per endpoint and status. `0` turns the logging off |
 | `RESULTS_OUTPUT_S3_PATH` | Set by CDP | Where the results are uploaded. Nothing is uploaded when it is unset |
